@@ -115,6 +115,11 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         AddCommand("css_lazertrap_save", "Save current traps to traps.json for this map", (p, i) => Save(p));
         AddCommand("css_lazertrap_list", "Show how many traps are active", (p, i) => List(p));
 
+        RegisterListener<OnServerPrecacheResources>(manifest =>
+        {
+            manifest.AddResource(BeamSprite);
+        });
+
         foreach (var name in Config.PlayerPlaceCommands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             AddCommand(name, "Place a temporary laser trap in front of you", (p, i) => PlacePlayerLaser(p));
 
