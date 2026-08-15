@@ -115,11 +115,6 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         AddCommand("css_lazertrap_save", "Save current traps to traps.json for this map", (p, i) => Save(p));
         AddCommand("css_lazertrap_list", "Show how many traps are active", (p, i) => List(p));
 
-        RegisterListener<OnServerPrecacheResources>(manifest =>
-        {
-            manifest.AddResource(BeamSprite);
-        });
-
         foreach (var name in Config.PlayerPlaceCommands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             AddCommand(name, "Place a temporary laser trap in front of you", (p, i) => PlacePlayerLaser(p));
 
@@ -454,8 +449,7 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         Server.PrintToConsole("[LazerTrap] DEBUG 3: AcceptInput TurnOn");
         beam.AcceptInput("TurnOn");
 
-        Server.PrintToConsole("[LazerTrap] DEBUG 4: SetModel");
-        beam.SetModel(BeamSprite);
+        Server.PrintToConsole("[LazerTrap] DEBUG 4: skipping SetModel (was crashing) — beam.Width/Render still set below");
 
         Server.PrintToConsole("[LazerTrap] DEBUG 5: Width");
         beam.Width = Config.BeamWidth;
