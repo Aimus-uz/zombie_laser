@@ -8,6 +8,7 @@ using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Utils;
 using CS2TraceRay.Class;
 using CS2TraceRay.Enum;
+using CS2TraceRay.Struct;
 using static CounterStrikeSharp.API.Core.Listeners;
 
 namespace LazerTrap;
@@ -287,7 +288,7 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         }
     }
 
-    private static System.Numerics.Vector3 ForwardFlat(CBasePlayerPawn pawn)
+    private static System.Numerics.Vector3 ForwardFlat(CCSPlayerPawn pawn)
     {
         float ry = pawn.EyeAngles.Y * MathF.PI / 180f;
         return new System.Numerics.Vector3(MathF.Cos(ry), MathF.Sin(ry), 0);
