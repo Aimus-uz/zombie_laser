@@ -44,6 +44,27 @@ public class LazerTrapConfig : BasePluginConfig
 
     [JsonPropertyName("admin_flag")]
     public string AdminFlag { get; set; } = "@css/root";
+
+    // ---- player-placed temporary lasers (available to everyone, no admin flag) ----
+
+    [JsonPropertyName("player_place_enabled")]
+    public bool PlayerPlaceEnabled { get; set; } = true;
+
+    [JsonPropertyName("player_place_cmd")]
+    public string PlayerPlaceCommands { get; set; } = "css_laser,css_lazer";
+
+    [JsonPropertyName("player_place_cooldown")]
+    public float PlayerPlaceCooldown { get; set; } = 20f;
+
+    [JsonPropertyName("player_place_length")]
+    public float PlayerPlaceLength { get; set; } = 250f;
+
+    [JsonPropertyName("player_place_duration")]
+    public float PlayerPlaceDuration { get; set; } = 15f;
+
+    // if true, only the zombie-mode "human" side can place; if false, anyone can
+    [JsonPropertyName("player_place_humans_only")]
+    public bool PlayerPlaceHumansOnly { get; set; } = true;
 }
 
 public class TrapDef
@@ -72,8 +93,10 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         "configs", "plugins", "LazerTrap", "traps.json");
 
     private readonly List<(Vector Start, Vector End, CEnvBeam? Beam)> _traps = new();
+    private readonly List<(Vector Start, Vector End, CEnvBeam? Beam, float ExpireAt)> _tempTraps = new();
     private readonly Dictionary<int, float> _lastHit = new();
     private readonly Dictionary<int, System.Numerics.Vector3> _pending = new();
+    private readonly Dictionary<int, float> _placeCooldown = new();
 
     private Color _beamColor = Color.Red;
 
@@ -91,6 +114,9 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         AddCommand("css_lazertrap_clear", "Remove all traps on this map (memory only)", (p, i) => ClearAll(p));
         AddCommand("css_lazertrap_save", "Save current traps to traps.json for this map", (p, i) => Save(p));
         AddCommand("css_lazertrap_list", "Show how many traps are active", (p, i) => List(p));
+
+        foreach (var name in Config.PlayerPlaceCommands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            AddCommand(name, "Place a temporary laser trap in front of you", (p, i) => PlacePlayerLaser(p));
 
         RegisterListener<OnMapStart>(_ => AddTimer(1.0f, LoadTrapsForCurrentMap));
         RegisterListener<OnTick>(OnTick);
@@ -168,6 +194,49 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         player?.PrintToChat($" \x04[LazerTrap]\x01 {_traps.Count} trap(s) active on {Server.MapName}.");
     }
 
+    // ---------- player-placed temporary lasers (no admin flag needed) ----------
+
+    private void PlacePlayerLaser(CCSPlayerController? player)
+    {
+        if (!Config.PlayerPlaceEnabled)
+            return;
+
+        var pawn = player?.PlayerPawn.Value;
+        if (player == null || pawn == null || pawn.AbsOrigin == null
+            || pawn.LifeState != (byte)LifeState_t.LIFE_ALIVE)
+            return;
+
+        if (Config.PlayerPlaceHumansOnly && player.TeamNum == Config.ZombieTeam)
+        {
+            player.PrintToChat(" \x02[Laser]\x01 Zombies can't place lasers.");
+            return;
+        }
+
+        float now = Server.CurrentTime;
+        if (_placeCooldown.TryGetValue(player.Slot, out var last) && now - last < Config.PlayerPlaceCooldown)
+        {
+            float left = Config.PlayerPlaceCooldown - (now - last);
+            player.PrintToChat($" \x02[Laser]\x01 On cooldown: {left:0.0}s left.");
+            return;
+        }
+
+        var origin = pawn.AbsOrigin;
+        float ry = pawn.EyeAngles.Y * MathF.PI / 180f; // horizontal facing only — keeps the beam flat and predictable
+        var forward = new System.Numerics.Vector3(MathF.Cos(ry), MathF.Sin(ry), 0);
+
+        var start = new System.Numerics.Vector3(origin.X, origin.Y, origin.Z + 40f);
+        var end = start + forward * Config.PlayerPlaceLength;
+
+        var startV = new Vector(start.X, start.Y, start.Z);
+        var endV = new Vector(end.X, end.Y, end.Z);
+        var beam = CreateBeam(startV, endV);
+
+        _tempTraps.Add((startV, endV, beam, now + Config.PlayerPlaceDuration));
+        _placeCooldown[player.Slot] = now;
+
+        player.PrintToChat($" \x04[Laser]\x01 Placed — lasts {Config.PlayerPlaceDuration:0}s.");
+    }
+
     private void Save(CCSPlayerController? player)
     {
         if (!IsAdmin(player)) return;
@@ -230,10 +299,22 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
 
     private void OnTick()
     {
-        if (_traps.Count == 0)
-            return;
-
         float now = Server.CurrentTime;
+
+        if (_tempTraps.Count > 0)
+        {
+            for (int i = _tempTraps.Count - 1; i >= 0; i--)
+            {
+                if (now >= _tempTraps[i].ExpireAt)
+                {
+                    _tempTraps[i].Beam?.Remove();
+                    _tempTraps.RemoveAt(i);
+                }
+            }
+        }
+
+        if (_traps.Count == 0 && _tempTraps.Count == 0)
+            return;
 
         for (int slot = 0; slot < 64; slot++)
         {
@@ -251,15 +332,30 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
                 continue;
 
             var pos = new System.Numerics.Vector3(pawn.AbsOrigin.X, pawn.AbsOrigin.Y, pawn.AbsOrigin.Z + 40f);
+            bool hit = false;
 
             foreach (var trap in _traps)
             {
                 var s = new System.Numerics.Vector3(trap.Start.X, trap.Start.Y, trap.Start.Z);
                 var e = new System.Numerics.Vector3(trap.End.X, trap.End.Y, trap.End.Z);
                 var closest = ClosestPointOnSegment(s, e, pos);
-                float dist = System.Numerics.Vector3.Distance(closest, pos);
+                if (System.Numerics.Vector3.Distance(closest, pos) > Config.HitRadius)
+                    continue;
 
-                if (dist > Config.HitRadius)
+                _lastHit[slot] = now;
+                ApplyHit(player, pawn, pos, closest);
+                hit = true;
+                break;
+            }
+
+            if (hit) continue;
+
+            foreach (var trap in _tempTraps)
+            {
+                var s = new System.Numerics.Vector3(trap.Start.X, trap.Start.Y, trap.Start.Z);
+                var e = new System.Numerics.Vector3(trap.End.X, trap.End.Y, trap.End.Z);
+                var closest = ClosestPointOnSegment(s, e, pos);
+                if (System.Numerics.Vector3.Distance(closest, pos) > Config.HitRadius)
                     continue;
 
                 _lastHit[slot] = now;
@@ -335,6 +431,11 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         foreach (var t in _traps)
             t.Beam?.Remove();
         _traps.Clear();
+
+        foreach (var t in _tempTraps)
+            t.Beam?.Remove();
+        _tempTraps.Clear();
+
         _lastHit.Clear();
     }
 
