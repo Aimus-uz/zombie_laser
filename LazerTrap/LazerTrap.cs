@@ -6,6 +6,8 @@ using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Utils;
+using CS2TraceRay.Class;
+using CS2TraceRay.Enum;
 using static CounterStrikeSharp.API.Core.Listeners;
 
 namespace LazerTrap;
@@ -239,27 +241,6 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
             return;
         }
 
-        var origin = pawn.AbsOrigin;
-        var point = new System.Numerics.Vector3(origin.X, origin.Y, origin.Z + 40f);
-
-        // second call: this player already marked point A, this call sets point B and spawns the beam
-        if (_pending.TryGetValue(player.Slot, out var a))
-        {
-            _pending.Remove(player.Slot);
-
-            var startV = new Vector(a.X, a.Y, a.Z);
-            var endV = new Vector(point.X, point.Y, point.Z);
-            var beam = CreateBeam(startV, endV);
-
-            float placedAt = Server.CurrentTime;
-            _tempTraps.Add((startV, endV, beam, placedAt + Config.PlayerPlaceDuration));
-            _placeCooldown[player.Slot] = placedAt;
-
-            player.PrintToChat($" \x04[Laser]\x01 Placed — lasts {Config.PlayerPlaceDuration:0}s.");
-            return;
-        }
-
-        // first call: check cooldown, then mark point A here
         float now = Server.CurrentTime;
         if (_placeCooldown.TryGetValue(player.Slot, out var last) && now - last < Config.PlayerPlaceCooldown)
         {
@@ -268,8 +249,48 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
             return;
         }
 
-        _pending[player.Slot] = point;
-        player.PrintToChat(" \x04[Laser]\x01 Start point marked. Walk to the end point and type !laser again to place it.");
+        var origin = pawn.AbsOrigin;
+        var start = new System.Numerics.Vector3(origin.X, origin.Y, origin.Z + 40f);
+
+        // aim-at-wall placement: laser stretches from the player to wherever their crosshair hits.
+        // Falls back to a fixed-length straight line if the trace comes back empty for any reason.
+        var end = TraceWallPoint(player) ?? (start + ForwardFlat(pawn) * Config.PlayerPlaceLength);
+
+        var startV = new Vector(start.X, start.Y, start.Z);
+        var endV = new Vector(end.X, end.Y, end.Z);
+        var beam = CreateBeam(startV, endV);
+
+        _tempTraps.Add((startV, endV, beam, now + Config.PlayerPlaceDuration));
+        _placeCooldown[player.Slot] = now;
+
+        player.PrintToChat($" \x04[Laser]\x01 Placed — lasts {Config.PlayerPlaceDuration:0}s.");
+    }
+
+    private System.Numerics.Vector3? TraceWallPoint(CCSPlayerController player)
+    {
+        try
+        {
+            CGameTrace? trace = player.GetGameTraceByEyePosition(TraceMask.MaskShot, Contents.Solid, player);
+            if (trace == null)
+                return null;
+
+            var hit = trace.Value.EndPos;
+            if (hit == null)
+                return null;
+
+            return new System.Numerics.Vector3(hit.X, hit.Y, hit.Z);
+        }
+        catch (Exception ex)
+        {
+            Server.PrintToConsole($"[LazerTrap] TraceWallPoint error: {ex}");
+            return null;
+        }
+    }
+
+    private static System.Numerics.Vector3 ForwardFlat(CBasePlayerPawn pawn)
+    {
+        float ry = pawn.EyeAngles.Y * MathF.PI / 180f;
+        return new System.Numerics.Vector3(MathF.Cos(ry), MathF.Sin(ry), 0);
     }
 
     private void Save(CCSPlayerController? player)
