@@ -238,6 +238,7 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
             return;
         }
 
+        Server.PrintToConsole("[LazerTrap] DEBUG A: reading origin/eyeangles");
         var origin = pawn.AbsOrigin;
         float ry = pawn.EyeAngles.Y * MathF.PI / 180f; // horizontal facing only — keeps the beam flat and predictable
         var forward = new System.Numerics.Vector3(MathF.Cos(ry), MathF.Sin(ry), 0);
@@ -247,7 +248,9 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
 
         var startV = new Vector(start.X, start.Y, start.Z);
         var endV = new Vector(end.X, end.Y, end.Z);
+        Server.PrintToConsole("[LazerTrap] DEBUG B: calling CreateBeam");
         var beam = CreateBeam(startV, endV);
+        Server.PrintToConsole("[LazerTrap] DEBUG C: CreateBeam returned");
 
         _tempTraps.Add((startV, endV, beam, now + Config.PlayerPlaceDuration));
         _placeCooldown[player.Slot] = now;
@@ -437,22 +440,41 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
 
     private CEnvBeam? CreateBeam(Vector start, Vector end)
     {
+        Server.PrintToConsole("[LazerTrap] DEBUG 1: creating entity");
         var beam = Utilities.CreateEntityByName<CEnvBeam>("env_beam");
         if (beam == null || !beam.IsValid)
+        {
+            Server.PrintToConsole("[LazerTrap] DEBUG: entity creation failed / invalid");
             return null;
+        }
 
+        Server.PrintToConsole("[LazerTrap] DEBUG 2: DispatchSpawn");
         beam.DispatchSpawn();
+
+        Server.PrintToConsole("[LazerTrap] DEBUG 3: AcceptInput TurnOn");
         beam.AcceptInput("TurnOn");
+
+        Server.PrintToConsole("[LazerTrap] DEBUG 4: SetModel");
         beam.SetModel(BeamSprite);
+
+        Server.PrintToConsole("[LazerTrap] DEBUG 5: Width");
         beam.Width = Config.BeamWidth;
         Utilities.SetStateChanged(beam, "CBeam", "m_fWidth");
+
+        Server.PrintToConsole("[LazerTrap] DEBUG 6: Render");
         beam.Render = _beamColor;
         Utilities.SetStateChanged(beam, "CBaseModelEntity", "m_clrRender");
+
+        Server.PrintToConsole("[LazerTrap] DEBUG 7: Teleport");
         beam.Teleport(start, new QAngle(), new Vector());
+
+        Server.PrintToConsole("[LazerTrap] DEBUG 8: EndPos");
         beam.EndPos.X = end.X;
         beam.EndPos.Y = end.Y;
         beam.EndPos.Z = end.Z;
         Utilities.SetStateChanged(beam, "CBeam", "m_vecEndPos");
+
+        Server.PrintToConsole("[LazerTrap] DEBUG 9: done");
         return beam;
     }
 
