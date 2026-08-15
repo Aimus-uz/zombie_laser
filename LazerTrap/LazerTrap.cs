@@ -65,6 +65,20 @@ public class LazerTrapConfig : BasePluginConfig
     // if true, only the zombie-mode "human" side can place; if false, anyone can
     [JsonPropertyName("player_place_humans_only")]
     public bool PlayerPlaceHumansOnly { get; set; } = true;
+
+    // ---- burning after a hit ----
+
+    [JsonPropertyName("burn_ticks")]
+    public int BurnTicks { get; set; } = 3;
+
+    [JsonPropertyName("burn_damage_per_tick")]
+    public int BurnDamagePerTick { get; set; } = 5;
+
+    [JsonPropertyName("burn_tick_interval")]
+    public float BurnTickInterval { get; set; } = 1f;
+
+    [JsonPropertyName("burn_sound")]
+    public string BurnSound { get; set; } = "ambient/fire/fire_med_loop1.wav";
 }
 
 public class TrapDef
@@ -225,6 +239,27 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
             return;
         }
 
+        var origin = pawn.AbsOrigin;
+        var point = new System.Numerics.Vector3(origin.X, origin.Y, origin.Z + 40f);
+
+        // second call: this player already marked point A, this call sets point B and spawns the beam
+        if (_pending.TryGetValue(player.Slot, out var a))
+        {
+            _pending.Remove(player.Slot);
+
+            var startV = new Vector(a.X, a.Y, a.Z);
+            var endV = new Vector(point.X, point.Y, point.Z);
+            var beam = CreateBeam(startV, endV);
+
+            float placedAt = Server.CurrentTime;
+            _tempTraps.Add((startV, endV, beam, placedAt + Config.PlayerPlaceDuration));
+            _placeCooldown[player.Slot] = placedAt;
+
+            player.PrintToChat($" \x04[Laser]\x01 Placed — lasts {Config.PlayerPlaceDuration:0}s.");
+            return;
+        }
+
+        // first call: check cooldown, then mark point A here
         float now = Server.CurrentTime;
         if (_placeCooldown.TryGetValue(player.Slot, out var last) && now - last < Config.PlayerPlaceCooldown)
         {
@@ -233,24 +268,8 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
             return;
         }
 
-        Server.PrintToConsole("[LazerTrap] DEBUG A: reading origin/eyeangles");
-        var origin = pawn.AbsOrigin;
-        float ry = pawn.EyeAngles.Y * MathF.PI / 180f; // horizontal facing only — keeps the beam flat and predictable
-        var forward = new System.Numerics.Vector3(MathF.Cos(ry), MathF.Sin(ry), 0);
-
-        var start = new System.Numerics.Vector3(origin.X, origin.Y, origin.Z + 40f);
-        var end = start + forward * Config.PlayerPlaceLength;
-
-        var startV = new Vector(start.X, start.Y, start.Z);
-        var endV = new Vector(end.X, end.Y, end.Z);
-        Server.PrintToConsole("[LazerTrap] DEBUG B: calling CreateBeam");
-        var beam = CreateBeam(startV, endV);
-        Server.PrintToConsole("[LazerTrap] DEBUG C: CreateBeam returned");
-
-        _tempTraps.Add((startV, endV, beam, now + Config.PlayerPlaceDuration));
-        _placeCooldown[player.Slot] = now;
-
-        player.PrintToChat($" \x04[Laser]\x01 Placed — lasts {Config.PlayerPlaceDuration:0}s.");
+        _pending[player.Slot] = point;
+        player.PrintToChat(" \x04[Laser]\x01 Start point marked. Walk to the end point and type !laser again to place it.");
     }
 
     private void Save(CCSPlayerController? player)
@@ -412,7 +431,55 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
         player.ExecuteClientCommand($"play {Config.HurtSound}");
 
         if (pawn.Health <= 0)
+        {
             pawn.CommitSuicide(false, true);
+            return;
+        }
+
+        StartBurning(player.Slot);
+    }
+
+    private void StartBurning(int slot)
+    {
+        var player = Utilities.GetPlayerFromSlot(slot);
+        var pawn = player?.PlayerPawn.Value;
+        if (player == null || pawn == null || !pawn.IsValid || pawn.LifeState != (byte)LifeState_t.LIFE_ALIVE)
+            return;
+
+        pawn.Render = Color.FromArgb(255, 255, 90, 20);
+        Utilities.SetStateChanged(pawn, "CBaseModelEntity", "m_clrRender");
+        player.ExecuteClientCommand($"play {Config.BurnSound}");
+
+        BurnTick(slot, Config.BurnTicks);
+    }
+
+    private void BurnTick(int slot, int ticksLeft)
+    {
+        var player = Utilities.GetPlayerFromSlot(slot);
+        var pawn = player?.PlayerPawn.Value;
+        if (player == null || pawn == null || !pawn.IsValid || pawn.LifeState != (byte)LifeState_t.LIFE_ALIVE)
+            return;
+
+        if (ticksLeft <= 0)
+        {
+            pawn.Render = Color.FromArgb(255, 255, 255, 255);
+            Utilities.SetStateChanged(pawn, "CBaseModelEntity", "m_clrRender");
+            return;
+        }
+
+        int hp = pawn.Health - Config.BurnDamagePerTick;
+        pawn.Health = Math.Max(hp, 0);
+        Utilities.SetStateChanged(pawn, "CBaseEntity", "m_iHealth");
+
+        if (pawn.Health <= 0)
+        {
+            pawn.Render = Color.FromArgb(255, 255, 255, 255);
+            Utilities.SetStateChanged(pawn, "CBaseModelEntity", "m_clrRender");
+            pawn.CommitSuicide(false, true);
+            return;
+        }
+
+        AddTimer(Config.BurnTickInterval, () => BurnTick(slot, ticksLeft - 1));
     }
 
     // ---------- helpers ----------
@@ -435,40 +502,23 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
 
     private CEnvBeam? CreateBeam(Vector start, Vector end)
     {
-        Server.PrintToConsole("[LazerTrap] DEBUG 1: creating entity");
         var beam = Utilities.CreateEntityByName<CEnvBeam>("env_beam");
         if (beam == null || !beam.IsValid)
-        {
-            Server.PrintToConsole("[LazerTrap] DEBUG: entity creation failed / invalid");
             return null;
-        }
 
-        Server.PrintToConsole("[LazerTrap] DEBUG 2: DispatchSpawn");
         beam.DispatchSpawn();
-
-        Server.PrintToConsole("[LazerTrap] DEBUG 3: AcceptInput TurnOn");
         beam.AcceptInput("TurnOn");
-
-        Server.PrintToConsole("[LazerTrap] DEBUG 4: skipping SetModel (was crashing) — beam.Width/Render still set below");
-
-        Server.PrintToConsole("[LazerTrap] DEBUG 5: Width");
+        // NOTE: beam.SetModel(...) is intentionally NOT called — it crashed the server (fatal
+        // engine error, not a catchable .NET exception). The beam still renders fine without it.
         beam.Width = Config.BeamWidth;
         Utilities.SetStateChanged(beam, "CBeam", "m_fWidth");
-
-        Server.PrintToConsole("[LazerTrap] DEBUG 6: Render");
         beam.Render = _beamColor;
         Utilities.SetStateChanged(beam, "CBaseModelEntity", "m_clrRender");
-
-        Server.PrintToConsole("[LazerTrap] DEBUG 7: Teleport");
         beam.Teleport(start, new QAngle(), new Vector());
-
-        Server.PrintToConsole("[LazerTrap] DEBUG 8: EndPos");
         beam.EndPos.X = end.X;
         beam.EndPos.Y = end.Y;
         beam.EndPos.Z = end.Z;
         Utilities.SetStateChanged(beam, "CBeam", "m_vecEndPos");
-
-        Server.PrintToConsole("[LazerTrap] DEBUG 9: done");
         return beam;
     }
 
