@@ -198,6 +198,19 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
 
     private void PlacePlayerLaser(CCSPlayerController? player)
     {
+        try
+        {
+            PlacePlayerLaserInternal(player);
+        }
+        catch (Exception ex)
+        {
+            Server.PrintToConsole($"[LazerTrap] css_laser error: {ex}");
+            player?.PrintToChat(" \x02[Laser]\x01 Something went wrong placing the laser.");
+        }
+    }
+
+    private void PlacePlayerLaserInternal(CCSPlayerController? player)
+    {
         if (!Config.PlayerPlaceEnabled)
             return;
 
@@ -298,6 +311,18 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
     // ---------- damage / knockback loop ----------
 
     private void OnTick()
+    {
+        try
+        {
+            OnTickInternal();
+        }
+        catch (Exception ex)
+        {
+            Server.PrintToConsole($"[LazerTrap] OnTick error: {ex}");
+        }
+    }
+
+    private void OnTickInternal()
     {
         float now = Server.CurrentTime;
 
