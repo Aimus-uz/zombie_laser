@@ -194,7 +194,7 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
             return;
         }
         var last = _traps[^1];
-        last.Beam?.Remove();
+        SafeRemoveBeam(last.Beam);
         _traps.RemoveAt(_traps.Count - 1);
         player?.PrintToChat($" \x04[LazerTrap]\x01 Removed last trap ({_traps.Count} left).");
     }
@@ -376,7 +376,7 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
             {
                 if (now >= _tempTraps[i].ExpireAt)
                 {
-                    _tempTraps[i].Beam?.Remove();
+                    SafeRemoveBeam(_tempTraps[i].Beam);
                     _tempTraps.RemoveAt(i);
                 }
             }
@@ -547,14 +547,27 @@ public class LazerTrap : BasePlugin, IPluginConfig<LazerTrapConfig>
     private void ClearBeams()
     {
         foreach (var t in _traps)
-            t.Beam?.Remove();
+            SafeRemoveBeam(t.Beam);
         _traps.Clear();
 
         foreach (var t in _tempTraps)
-            t.Beam?.Remove();
+            SafeRemoveBeam(t.Beam);
         _tempTraps.Clear();
 
         _lastHit.Clear();
+    }
+
+    private static void SafeRemoveBeam(CEnvBeam? beam)
+    {
+        try
+        {
+            if (beam != null && beam.IsValid)
+                beam.Remove();
+        }
+        catch
+        {
+            // engine already destroyed this entity (e.g. round reset) — nothing to clean up
+        }
     }
 
     private static Color ParseColor(string value)
