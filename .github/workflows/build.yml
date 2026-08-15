@@ -1,0 +1,48 @@
+name: Build LazerTrap
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "LazerTrap/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore LazerTrap/LazerTrap.csproj
+
+      - name: Publish
+        run: dotnet publish LazerTrap/LazerTrap.csproj -c Release -o publish/LazerTrap
+
+      - name: Zip plugin folder
+        run: |
+          cd publish
+          zip -r LazerTrap.zip LazerTrap
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LazerTrap
+          path: publish/LazerTrap.zip
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: LazerTrap build ${{ github.run_number }}
+          files: publish/LazerTrap.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
